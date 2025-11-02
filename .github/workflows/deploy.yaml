@@ -22,6 +22,12 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
 
+      - name: Install gke-gcloud-auth-plugin
+        run: |
+          curl -LO https://storage.googleapis.com/gke-gcloud-auth-plugin/$(uname | tr '[:upper:]' '[:lower:]')/gke-gcloud-auth-plugin
+          sudo mv gke-gcloud-auth-plugin /usr/local/bin/
+          sudo chmod +x /usr/local/bin/gke-gcloud-auth-plugin
+
       - name: Configure Docker auth for Artifact Registry
         run: |
           gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev

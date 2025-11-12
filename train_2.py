@@ -117,13 +117,13 @@ async def predict_species(data: IrisInput, request: Request):
                 "event": "prediction",
                 "trace_id": trace_id,
                 "input": data.dict(),
-                "result": {"predicted_class": int(prediction)},
+                "result": {"predicted_class": prediction},
                 "latency_ms": latency,
                 "status": "success"
             }))
 
             return {
-                "predicted_class": int(prediction),
+                "predicted_class": prediction,
                 "latency_ms": latency,
                 "trace_id": trace_id
             }

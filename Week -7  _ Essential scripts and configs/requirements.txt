@@ -1,6 +1,0 @@
-fastapi
-uvicorn[standard]
-pydantic
-
-# Exporter for Google Cloud
-opentelemetry-exporter-gcp-trace

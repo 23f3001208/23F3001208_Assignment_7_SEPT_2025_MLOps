@@ -1,7 +1,10 @@
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
 joblib
 numpy
 scikit-learn
 pandas
+
+# Telemetry and logging
+opentelemetry-exporter-gcp-trace

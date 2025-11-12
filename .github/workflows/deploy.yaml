@@ -52,7 +52,59 @@ jobs:
         run: |
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/hpa.yaml
 
       - name: Verify deployment
         run: |
           kubectl rollout status deployment/iris-api-deployment
+          kubectl get pods -l app=iris-api
+          kubectl get hpa
+
+      - name: Get Service External IP
+        id: get-ip
+        run: |
+          echo "Waiting for LoadBalancer IP..."
+          sleep 30
+          EXTERNAL_IP=$(kubectl get service iris-api-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "EXTERNAL_IP=$EXTERNAL_IP" >> $GITHUB_OUTPUT
+          echo "Service available at: http://$EXTERNAL_IP:80"
+
+      - name: Install wrk for stress testing
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wrk
+
+      - name: Test endpoint availability
+        run: |
+          EXTERNAL_IP=${{ steps.get-ip.outputs.EXTERNAL_IP }}
+          echo "Testing endpoint at http://$EXTERNAL_IP:80/predict"
+          curl -X POST http://$EXTERNAL_IP:80/predict \
+            -H "Content-Type: application/json" \
+            -d '{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}'
+
+      - name: Stress Test with 1000 requests
+        run: |
+          EXTERNAL_IP=${{ steps.get-ip.outputs.EXTERNAL_IP }}
+          echo "Running stress test with 1000 connections..."
+          wrk -t4 -c1000 -d30s --latency -s post.lua http://$EXTERNAL_IP:80/predict
+
+      - name: Check HPA scaling
+        run: |
+          echo "Checking HPA status after stress test..."
+          kubectl get hpa iris-api-hpa
+          kubectl get pods -l app=iris-api
+
+      - name: Stress Test with 2000 requests (Observe bottleneck)
+        run: |
+          EXTERNAL_IP=${{ steps.get-ip.outputs.EXTERNAL_IP }}
+          echo "Running stress test with 2000 connections to observe bottleneck..."
+          wrk -t4 -c2000 -d30s --latency -s post.lua http://$EXTERNAL_IP:80/predict
+
+      - name: Final HPA and Pod Status
+        run: |
+          echo "Final HPA status:"
+          kubectl get hpa iris-api-hpa
+          echo "Final Pod status:"
+          kubectl get pods -l app=iris-api
+          echo "Pod details:"
+          kubectl describe pods -l app=iris-api

@@ -1,8 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-import joblib
-import pandas as pd
+from pydantic import BaseModel, ValidationError
 import logging
 import time
 import json
@@ -20,7 +18,7 @@ span_processor = BatchSpanProcessor(CloudTraceSpanExporter())
 trace.get_tracer_provider().add_span_processor(span_processor)
 
 # Setup structured logging
-logger = logging.getLogger("iris-ml-service")
+logger = logging.getLogger("demo-log-ml-service")
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler()
 
@@ -32,41 +30,44 @@ formatter = logging.Formatter(json.dumps({
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-app = FastAPI(title="Iris Classifier API")
+# FastAPI app
+app = FastAPI()
 
-# App state for health checks
+# Dummy model function
+def dummy_model(features: dict):
+    time.sleep(0.1)  # Simulate compute
+    return {"prediction": 42, "confidence": 0.99}
+
+# Input schema
+class Input(BaseModel):
+    feature1: float
+    feature2: float
+
+
+# Simulated flags, normally these would be set by various parts of the code
+# e.g. if model load is taking time due to weights being large, 
+#  then is_ready would be False until the model is loaded.
 app_state = {"is_ready": False, "is_alive": True}
-
-# Load model on startup
-model = None
 
 @app.on_event("startup")
 async def startup_event():
-    global model
-    try:
-        logger.info(json.dumps({"event": "startup", "message": "Loading model"}))
-        time.sleep(2)  # Simulate model loading time
-        model = joblib.load("model.joblib")
-        app_state["is_ready"] = True
-        logger.info(json.dumps({"event": "startup", "message": "Model loaded successfully"}))
-    except Exception as e:
-        logger.error(json.dumps({"event": "startup_error", "error": str(e)}))
-        app_state["is_alive"] = False
+    import time
+    time.sleep(2)  # simulate work, normally this would be model loading
+    app_state["is_ready"] = True
 
-# Health check endpoints
 @app.get("/live_check", tags=["Probe"])
 async def liveness_probe():
     if app_state["is_alive"]:
         return {"status": "alive"}
-    return Response(status_code=500)
+    return Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @app.get("/ready_check", tags=["Probe"])
 async def readiness_probe():
     if app_state["is_ready"]:
         return {"status": "ready"}
-    return Response(status_code=503)
+    return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-# Middleware for request timing
+
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
     start_time = time.time()
@@ -75,7 +76,6 @@ async def add_process_time_header(request: Request, call_next):
     response.headers["X-Process-Time-ms"] = str(duration)
     return response
 
-# Exception handler
 @app.exception_handler(Exception)
 async def exception_handler(request: Request, exc: Exception):
     span = trace.get_current_span()
@@ -91,42 +91,26 @@ async def exception_handler(request: Request, exc: Exception):
         content={"detail": "Internal Server Error", "trace_id": trace_id},
     )
 
-# Input schema
-class IrisInput(BaseModel):
-    sepal_length: float
-    sepal_width: float
-    petal_length: float
-    petal_width: float
-
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to the Iris Classifier API!"}
-
 @app.post("/predict")
-async def predict_species(data: IrisInput, request: Request):
-    with tracer.start_as_current_span("iris_prediction") as span:
+async def predict(input: Input, request: Request):
+    with tracer.start_as_current_span("model_inference") as span:
         start_time = time.time()
         trace_id = format(span.get_span_context().trace_id, "032x")
 
         try:
-            input_df = pd.DataFrame([data.dict()])
-            prediction = model.predict(input_df)[0]
+            input_data = input.dict()
+            result = dummy_model(input_data)
             latency = round((time.time() - start_time) * 1000, 2)
 
             logger.info(json.dumps({
                 "event": "prediction",
                 "trace_id": trace_id,
-                "input": data.dict(),
-                "result": {"predicted_class": int(prediction)},
+                "input": input_data,
+                "result": result,
                 "latency_ms": latency,
                 "status": "success"
             }))
-
-            return {
-                "predicted_class": int(prediction),
-                "latency_ms": latency,
-                "trace_id": trace_id
-            }
+            return result
 
         except Exception as e:
             logger.exception(json.dumps({
@@ -135,8 +119,3 @@ async def predict_species(data: IrisInput, request: Request):
                 "error": str(e)
             }))
             raise HTTPException(status_code=500, detail="Prediction failed")
-
-@app.post("/predict/")
-async def predict_species_legacy(data: IrisInput, request: Request):
-    """Legacy endpoint for backward compatibility"""
-    return await predict_species(data, request)
